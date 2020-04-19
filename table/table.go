@@ -2,9 +2,11 @@ package table
 
 import (
 	"errors"
+	"fmt"
+	"log"
 	"sort"
 
-	"github.com/notnil/joker/hand"
+	"github.com/alcamerone/joker/hand"
 )
 
 type Status int
@@ -12,6 +14,7 @@ type Status int
 const (
 	Broken Status = iota
 	Dealing
+	Done
 )
 
 type Round int
@@ -42,6 +45,7 @@ type Options struct {
 	Variant Variant
 	Stakes  Stakes
 	Limit   Limit
+	OneShot bool
 }
 
 type Stakes struct {
@@ -51,36 +55,39 @@ type Stakes struct {
 }
 
 type Table struct {
-	options Options
-	seats   []*Player
-	dealer  hand.Dealer
-	deck    *hand.Deck
-	cards   []hand.Card
-	active  *Player
-	status  Status
-	round   Round
-	button  int
-	cost    int
+	options         Options
+	seats           []*Player
+	dealer          hand.Dealer
+	deck            *hand.Deck
+	cards           []hand.Card
+	active          *Player
+	status          Status
+	round           Round
+	button          int
+	cost            int
+	lastWinners     []Player
+	lastContestants []Player
+	lastCards       []hand.Card
 }
 
-func New(dealer hand.Dealer, opts Options, playerIDs []string) *Table {
+func New(dealer hand.Dealer, opts Options, playerIDs []string, sittingOut []string) *Table {
 	status := Dealing
 	if len(playerIDs) < 2 {
 		status = Broken
 	}
 	seats := []*Player{}
-	for _, id := range playerIDs {
+	for i, id := range playerIDs {
 		p := &Player{
 			ID:    id,
 			Chips: opts.Buyin,
+			Seat:  i,
+		}
+		for _, s := range sittingOut {
+			if s == id {
+				p.Defaulting = true
+			}
 		}
 		seats = append(seats, p)
-	}
-	// rand.Shuffle(len(seats), func(i int, j int) {
-	// 	seats[i], seats[j] = seats[j], seats[i]
-	// })
-	for i, seat := range seats {
-		seat.Seat = i
 	}
 	t := &Table{
 		options: opts,
@@ -93,16 +100,57 @@ func New(dealer hand.Dealer, opts Options, playerIDs []string) *Table {
 	return t
 }
 
+func (t *Table) AddPlayer(id string, defaulting bool) {
+	p := &Player{
+		ID:         id,
+		Chips:      t.options.Buyin,
+		Seat:       len(t.seats),
+		Defaulting: defaulting,
+		SittingOut: true,
+	}
+	t.seats = append(t.seats, p)
+}
+
+func (t *Table) BuyPlayerIn(id string) error {
+	for _, s := range t.seats {
+		if s.ID == id {
+			s.Chips = t.options.Buyin
+			return nil
+		}
+	}
+	return fmt.Errorf("table: player %s not found", id)
+}
+
+func (t *Table) NewRound() State {
+	t.status = Dealing
+	t.round = PreFlop
+	t.lastWinners = nil
+	t.lastContestants = nil
+	t.lastCards = nil
+	return t.setupRound()
+}
+
+type Result struct {
+	Winners     []Player
+	Contestants []Player
+	TableCards  []hand.Card
+}
+
 type State struct {
-	Options Options
-	Seats   []Player
-	Cards   []hand.Card
-	Active  Player
-	Status  Status
-	Round   Round
-	Button  int
-	Cost    int
-	Pot     int
+	Options    Options
+	Seats      []Player `json:",omitempty"`
+	Cards      []hand.Card
+	Active     Player
+	Dealer     *Player
+	BigBlind   *Player
+	SmallBlind *Player
+	Status     Status
+	Round      Round
+	Button     int
+	Cost       int
+	Pot        int
+	Owed       int
+	Result     Result `json:",omitempty"`
 }
 
 func (t *Table) State() State {
@@ -112,17 +160,29 @@ func (t *Table) State() State {
 		seats = append(seats, *seat)
 		pot += seat.ChipsInPot
 	}
-	return State{
-		Options: t.options,
-		Seats:   seats,
-		Cards:   append([]hand.Card(nil), t.cards...),
-		Active:  *t.active,
-		Button:  t.button,
-		Cost:    t.cost,
-		Round:   t.round,
-		Status:  t.status,
-		Pot:     pot,
+	s := State{
+		Options:    t.options,
+		Seats:      seats,
+		Cards:      append([]hand.Card(nil), t.cards...),
+		Active:     *t.active,
+		Dealer:     t.Dealer(),
+		BigBlind:   t.BigBlind(),
+		SmallBlind: t.SmallBlind(),
+		Button:     t.button,
+		Cost:       t.cost,
+		Round:      t.round,
+		Status:     t.status,
+		Pot:        pot,
+		Owed:       t.owed(),
 	}
+	if t.lastWinners != nil {
+		s.Result = Result{
+			Winners:     t.lastWinners,
+			Contestants: t.lastContestants,
+			TableCards:  t.lastCards,
+		}
+	}
+	return s
 }
 
 type Action struct {
@@ -141,34 +201,35 @@ const (
 	AllIn
 )
 
-func (t *Table) Fold() error {
+func (t *Table) Fold() (State, error) {
 	return t.Act(Action{Type: Fold})
 }
 
-func (t *Table) Check() error {
+func (t *Table) Check() (State, error) {
 	return t.Act(Action{Type: Check})
 }
 
-func (t *Table) Call() error {
+func (t *Table) Call() (State, error) {
 	return t.Act(Action{Type: Call})
 }
 
-func (t *Table) Bet(chips int) error {
+func (t *Table) Bet(chips int) (State, error) {
 	return t.Act(Action{Type: Bet, Chips: chips})
 }
 
-func (t *Table) Raise(chips int) error {
+func (t *Table) Raise(chips int) (State, error) {
 	return t.Act(Action{Type: Raise, Chips: chips})
 }
 
-func (t *Table) AllIn() error {
+func (t *Table) AllIn() (State, error) {
 	return t.Act(Action{Type: AllIn})
 }
 
-func (t *Table) Act(a Action) error {
+func (t *Table) Act(a Action) (State, error) {
 	if includes(t.LegalActions(), a.Type) == false {
-		return errors.New("table: illegal action attempted")
+		return State{}, fmt.Errorf("table: illegal action %s attempted", a.Type.String())
 	}
+	log.Printf("%s %ss", t.active.ID, a.Type.String())
 	// TODO enforce limits, min bets
 	switch a.Type {
 	case Fold:
@@ -178,7 +239,8 @@ func (t *Table) Act(a Action) error {
 		t.active.contribute(t.owed())
 	case Bet, Raise:
 		if a.Chips < t.options.Stakes.BigBlind {
-			return errors.New("table: bet or raise must be a minimum of the big blind")
+			return State{},
+				errors.New("table: bet or raise must be a minimum of the big blind")
 		}
 		t.active.contribute(t.owed())
 		t.active.contribute(a.Chips)
@@ -192,16 +254,25 @@ func (t *Table) Act(a Action) error {
 	if t.active.ChipsInPot > t.cost {
 		t.cost = t.active.ChipsInPot
 	}
-	t.update()
-	return nil
+	return t.update(), nil
 }
 
 func (t *Table) Seats() []Player {
-	seats := []Player{}
-	for _, seat := range t.seats {
-		seats = append(seats, *seat)
+	seats := make([]Player, len(t.seats))
+	for i, seat := range t.seats {
+		seats[i] = *seat
 	}
 	return seats
+}
+
+func (t *Table) SetPlayerDefaulting(playerId string, defaulting bool) error {
+	for _, s := range t.seats {
+		if s.ID == playerId {
+			s.Defaulting = defaulting
+			return nil
+		}
+	}
+	return fmt.Errorf("table: %s not found at table", playerId)
 }
 
 func (t *Table) LegalActions() []ActionType {
@@ -214,26 +285,53 @@ func (t *Table) LegalActions() []ActionType {
 	return []ActionType{Fold, Call, Raise, AllIn}
 }
 
-func (t *Table) update() {
+func (t *Table) update() State {
 	seat := t.nextToAct()
 	if seat != -1 {
 		t.active = t.seats[seat]
-		return
+		if t.active.Defaulting && !t.active.SittingOut {
+			t.active.SittingOut = true
+			state, _ := t.Act(Action{Type: Fold})
+			return state
+		}
+		return t.State()
 	}
 	if len(t.contesting()) == 1 || t.round == River {
 		t.payout()
+		if t.options.OneShot {
+			t.status = Done
+			return t.State()
+		}
 		t.round = PreFlop
 	} else {
 		t.round = (t.round + 1) % (River + 1)
 	}
-	t.setupRound()
+	return t.setupRound()
 }
 
 func (t *Table) Active() *Player {
 	return t.active
 }
 
-func (t *Table) setupRound() {
+func (t *Table) Dealer() *Player {
+	return t.seats[t.button]
+}
+
+func (t *Table) SmallBlind() *Player {
+	if t.occupiedSeats()-t.seatsSittingOut() == 2 {
+		return t.seats[t.button]
+	}
+	return t.seats[t.nextSeat(t.button)]
+}
+
+func (t *Table) BigBlind() *Player {
+	if t.occupiedSeats()-t.seatsSittingOut() == 2 {
+		return t.seats[t.nextSeat(t.button)]
+	}
+	return t.seats[t.nextSeat(t.nextSeat(t.button))]
+}
+
+func (t *Table) setupRound() State {
 	for _, seat := range t.seats {
 		if seat != nil {
 			seat.Acted = false
@@ -241,38 +339,69 @@ func (t *Table) setupRound() {
 	}
 	switch t.round {
 	case PreFlop:
+		for _, seat := range t.seats {
+			if seat != nil {
+				seat.SittingOut = seat.Defaulting || seat.Chips == 0 // IF YOU AIN'T GOT NO MONEY TAKE YO BROKE ASS HOME
+			}
+		}
+		t.status = Dealing
+		t.cards = nil
 		t.button = t.nextSeat(t.button)
 		sb := t.nextSeat(t.button)
 		bb := t.nextSeat(sb)
-		if t.occupiedSeats() == 2 {
+		if t.occupiedSeats()-t.seatsSittingOut() == 2 {
 			sb = t.button
 			bb = t.nextSeat(t.button)
 		}
 		t.deck = t.dealer.Deck()
 		for _, seat := range t.seats {
 			if seat != nil {
-				seat.Cards = t.deck.PopMulti(2)
+				seat.Cards = nil
 				seat.ChipsInPot = 0
 				seat.Acted = false
 				seat.Folded = false
 				seat.AllIn = false
-				seat.contribute(t.options.Stakes.Ante)
+				if !seat.SittingOut {
+					seat.Cards = t.deck.PopMulti(2)
+					seat.contribute(t.options.Stakes.Ante)
+				}
 			}
 		}
 		t.seats[sb].contribute(t.options.Stakes.SmallBlind)
 		t.seats[bb].contribute(t.options.Stakes.BigBlind)
-		action := t.nextSeat(bb)
+		t.active = t.seats[bb]
+		action := t.nextToAct()
+		if action == -1 {
+			// All players already folded or all in
+			return t.update()
+		}
 		t.active = t.seats[action]
 		t.cost = t.options.Stakes.BigBlind
 	case Flop:
 		t.cards = t.deck.PopMulti(3)
-		action := t.nextSeat(t.button)
+		t.active = t.seats[t.button]
+		action := t.nextToAct()
+		if action == -1 {
+			// All players already folded or all in
+			return t.update()
+		}
 		t.active = t.seats[action]
 	case Turn, River:
 		t.cards = append(t.cards, t.deck.Pop())
-		action := t.nextSeat(t.button)
+		t.active = t.seats[t.button]
+		action := t.nextToAct()
+		if action == -1 {
+			// All players already folded or all in
+			return t.update()
+		}
 		t.active = t.seats[action]
 	}
+	if t.active.Defaulting && !t.active.SittingOut {
+		t.active.SittingOut = true
+		state, _ := t.Act(Action{Type: Fold})
+		return state
+	}
+	return t.State()
 }
 
 func (t *Table) payout() {
@@ -281,28 +410,32 @@ func (t *Table) payout() {
 		hands[seat] = hand.New(append(seat.Cards, t.cards...))
 	}
 	for _, pot := range t.pots() {
-		// sort by best hand first
-		sort.Slice(pot.contesting, func(i, j int) bool {
-			iHand := hands[pot.contesting[i]]
-			jHand := hands[pot.contesting[j]]
-			return iHand.CompareTo(jHand) > 0
-		})
-		// select winners who split pot if more than one
 		winners := []*Player{}
-		h1 := hands[pot.contesting[0]]
-		for _, seat := range pot.contesting {
-			h2 := hands[seat]
-			if h1.CompareTo(h2) != 0 {
-				break
+		if len(pot.contesting) == 1 {
+			winners = []*Player{pot.contesting[0]}
+		} else {
+			// sort by best hand first
+			sort.Slice(pot.contesting, func(i, j int) bool {
+				iHand := hands[pot.contesting[i]]
+				jHand := hands[pot.contesting[j]]
+				return iHand.CompareTo(jHand) > 0
+			})
+			// select winners who split pot if more than one
+			h1 := hands[pot.contesting[0]]
+			for _, seat := range pot.contesting {
+				h2 := hands[seat]
+				if h1.CompareTo(h2) != 0 {
+					break
+				}
+				winners = append(winners, seat)
 			}
-			winners = append(winners, seat)
+			// sort closest to the button for spare chips in split pot
+			sort.Slice(winners, func(i, j int) bool {
+				iDist := t.distanceFromButton(winners[i])
+				jDist := t.distanceFromButton(winners[j])
+				return iDist < jDist
+			})
 		}
-		// sort closest to the button for spare chips in split pot
-		sort.Slice(winners, func(i, j int) bool {
-			iDist := t.distanceFromButton(winners[i])
-			jDist := t.distanceFromButton(winners[j])
-			return iDist < jDist
-		})
 		// payout chips
 		for i, seat := range winners {
 			seat.Chips += pot.chips / len(winners)
@@ -310,6 +443,16 @@ func (t *Table) payout() {
 				seat.Chips++
 			}
 		}
+		// store for reporting
+		t.lastWinners = make([]Player, len(winners))
+		for i, w := range winners {
+			t.lastWinners[i] = *w
+		}
+		t.lastContestants = make([]Player, len(pot.contesting))
+		for i, c := range pot.contesting {
+			t.lastContestants[i] = *c
+		}
+		t.lastCards = t.cards
 	}
 }
 
@@ -361,7 +504,7 @@ func (t *Table) nextSeat(seat int) int {
 	for {
 		seat = (seat + 1) % len(t.seats)
 		p := t.seats[seat]
-		if p != nil {
+		if p != nil && !p.SittingOut {
 			return seat
 		}
 	}
@@ -373,7 +516,7 @@ func (t *Table) nextToAct() int {
 	for {
 		seat = t.nextSeat(seat)
 		p := t.seats[seat]
-		if !p.Acted && !p.AllIn && !p.Folded {
+		if !p.Acted && !p.AllIn && !p.Folded && !p.SittingOut {
 			return p.Seat
 		}
 		count++
@@ -387,6 +530,15 @@ func (t *Table) occupiedSeats() int {
 	count := 0
 	for _, seat := range t.seats {
 		if seat != nil {
+			count++
+		}
+	}
+	return count
+}
+func (t *Table) seatsSittingOut() int {
+	count := 0
+	for _, seat := range t.seats {
+		if seat != nil && seat.SittingOut {
 			count++
 		}
 	}
@@ -412,7 +564,7 @@ func (t *Table) distanceFromButton(p *Player) int {
 func (t *Table) contesting() []*Player {
 	contesting := []*Player{}
 	for _, seat := range t.seats {
-		if seat.Folded == false {
+		if !seat.Folded && !seat.SittingOut {
 			contesting = append(contesting, seat)
 		}
 	}
@@ -427,6 +579,8 @@ type Player struct {
 	Acted      bool
 	Folded     bool
 	AllIn      bool
+	SittingOut bool
+	Defaulting bool
 	Cards      []hand.Card
 }
 
