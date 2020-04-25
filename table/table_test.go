@@ -6,12 +6,13 @@ import (
 
 	"github.com/notnil/joker/hand"
 	"github.com/notnil/joker/table"
+	"github.com/stretchr/testify/require"
 )
 
 type testCase struct {
 	start       *table.Table
 	actions     []table.Action
-	condition   func(table.State) bool
+	condition   func(*testing.T, table.State)
 	description string
 }
 
@@ -20,8 +21,11 @@ var (
 		{
 			start:   threePerson100Buyin(),
 			actions: nil,
-			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 98 && s.Seats[1].Chips == 100 && s.Seats[2].Chips == 99 && s.Active.Seat == 1
+			condition: func(t *testing.T, s table.State) {
+				require.Equal(t, 98, s.Seats[0].Chips)
+				require.Equal(t, 100, s.Seats[1].Chips)
+				require.Equal(t, 99, s.Seats[2].Chips)
+				require.Equal(t, 1, s.Active.Seat)
 			},
 			description: "initial blinds",
 		},
@@ -30,8 +34,12 @@ var (
 			actions: []table.Action{
 				{table.Raise, 5},
 			},
-			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 98 && s.Seats[1].Chips == 93 && s.Seats[2].Chips == 99 && s.Active.Seat == 2 && s.Cost == 7
+			condition: func(t *testing.T, s table.State) {
+				require.Equal(t, 98, s.Seats[0].Chips)
+				require.Equal(t, 93, s.Seats[1].Chips)
+				require.Equal(t, 99, s.Seats[2].Chips)
+				require.Equal(t, 2, s.Active.Seat)
+				require.Equal(t, 7, s.Cost)
 			},
 			description: "preflop raise",
 		},
@@ -45,8 +53,12 @@ var (
 				{table.Bet, 5},
 				{table.Fold, 0},
 			},
-			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 97 && s.Seats[1].Chips == 107 && s.Seats[2].Chips == 93 && s.Active.Seat == 2 && s.Button == 2
+			condition: func(t *testing.T, s table.State) {
+				require.Equal(t, 97, s.Seats[0].Chips)
+				require.Equal(t, 107, s.Seats[1].Chips)
+				require.Equal(t, 93, s.Seats[2].Chips)
+				require.Equal(t, 2, s.Active.Seat)
+				require.Equal(t, 2, s.Button)
 			},
 			description: "full hand 1",
 		},
@@ -57,9 +69,9 @@ var (
 				{Type: table.Fold},
 				{Type: table.Call},
 			},
-			condition: func(s table.State) bool {
-				return s.Round == table.Flop &&
-					s.Active.Seat == 0 // action is on 0 as 2 folded
+			condition: func(t *testing.T, s table.State) {
+				require.Equal(t, table.Flop, s.Round)
+				require.Equal(t, 0, s.Active.Seat) // action is on 0 as 2 folded
 			},
 			description: "sb fold",
 		},
@@ -73,11 +85,11 @@ var (
 				{Type: table.Fold},
 				{Type: table.Fold},
 			},
-			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 92 && // -7 last round, -1 small blind
-					s.Seats[1].Chips == 91 && // -7 last round, -2 big blind
-					s.Seats[2].Chips == 114 && // +14 last round
-					s.Round == table.PreFlop
+			condition: func(t *testing.T, s table.State) {
+				require.Equal(t, table.PreFlop, s.Round)
+				require.Equal(t, 92, s.Seats[0].Chips)  // -7 last round, -1 small blind
+				require.Equal(t, 91, s.Seats[1].Chips)  // -7 last round, -2 big blind
+				require.Equal(t, 114, s.Seats[2].Chips) // +14 last round
 			},
 			description: "post-flop folds",
 		},
@@ -86,15 +98,15 @@ var (
 
 func TestTable(t *testing.T) {
 	for _, tc := range testCases {
-		tbl := tc.start
-		for _, a := range tc.actions {
-			if err := tbl.Act(a); err != nil {
-				t.Fatal(err)
+		t.Run(tc.description, func(t *testing.T) {
+			tbl := tc.start
+			for _, a := range tc.actions {
+				if err := tbl.Act(a); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-		if tc.condition(tbl.State()) == false {
-			t.Fatalf(tc.description)
-		}
+			tc.condition(t, tbl.State())
+		})
 	}
 }
 
