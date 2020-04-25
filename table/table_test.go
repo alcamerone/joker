@@ -50,6 +50,37 @@ var (
 			},
 			description: "full hand 1",
 		},
+		{
+			start: threePerson100Buyin(),
+			actions: []table.Action{
+				{table.Raise, 5},
+				{Type: table.Fold},
+				{Type: table.Call},
+			},
+			condition: func(s table.State) bool {
+				return s.Round == table.Flop &&
+					s.Active.Seat == 0 // action is on 0 as 2 folded
+			},
+			description: "sb fold",
+		},
+		{
+			start: threePerson100Buyin(),
+			actions: []table.Action{
+				{table.Raise, 5},
+				{Type: table.Call},
+				{Type: table.Call},
+				{table.Bet, 5},
+				{Type: table.Fold},
+				{Type: table.Fold},
+			},
+			condition: func(s table.State) bool {
+				return s.Seats[0].Chips == 92 && // -7 last round, -1 small blind
+					s.Seats[1].Chips == 91 && // -7 last round, -2 big blind
+					s.Seats[2].Chips == 114 && // +14 last round
+					s.Round == table.PreFlop
+			},
+			description: "post-flop folds",
+		},
 	}
 )
 

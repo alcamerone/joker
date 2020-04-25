@@ -266,11 +266,23 @@ func (t *Table) setupRound() {
 		t.cost = t.options.Stakes.BigBlind
 	case Flop:
 		t.cards = t.deck.PopMulti(3)
-		action := t.nextSeat(t.button)
+		t.active = t.seats[t.button]
+		action := t.nextToAct()
+		if action == -1 {
+			// All players already folded or all in
+			t.update()
+			return
+		}
 		t.active = t.seats[action]
 	case Turn, River:
 		t.cards = append(t.cards, t.deck.Pop())
-		action := t.nextSeat(t.button)
+		t.active = t.seats[t.button]
+		action := t.nextToAct()
+		if action == -1 {
+			// All players already folded or all in
+			t.update()
+			return
+		}
 		t.active = t.seats[action]
 	}
 }
