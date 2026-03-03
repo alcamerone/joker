@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/notnil/joker/util"
+	"github.com/alcamerone/joker/util"
 )
 
 type combo struct {

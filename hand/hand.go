@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/notnil/joker/util"
+	"github.com/alcamerone/joker/util"
 )
 
 // A Ranking is one of the ten possible hand rankings that determine the

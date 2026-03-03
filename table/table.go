@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/notnil/joker/hand"
+	"github.com/alcamerone/joker/hand"
 )
 
 type Status int
