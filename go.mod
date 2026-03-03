@@ -1,3 +1,3 @@
-module github.com/notnil/joker
+module github.com/alcamerone/joker
 
 go 1.14
