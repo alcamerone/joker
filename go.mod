@@ -1,3 +1,3 @@
 module github.com/alcamerone/joker
 
-go 1.14
+go 1.26

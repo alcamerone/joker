@@ -1,7 +1,7 @@
 package table_test
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/alcamerone/joker/hand"
@@ -21,7 +21,7 @@ var (
 			start:   threePerson100Buyin(),
 			actions: nil,
 			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 98 && s.Seats[1].Chips == 100 && s.Seats[2].Chips == 99 && s.Active.Seat == 1
+				return s.Seats[0].Chips == 98 && s.Seats[1].Chips == 100 && s.Seats[2].Chips == 99 && s.ActiveIdx == 1
 			},
 			description: "initial blinds",
 		},
@@ -31,7 +31,7 @@ var (
 				{table.Raise, 5},
 			},
 			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 98 && s.Seats[1].Chips == 93 && s.Seats[2].Chips == 99 && s.Active.Seat == 2 && s.Cost == 7
+				return s.Seats[0].Chips == 98 && s.Seats[1].Chips == 93 && s.Seats[2].Chips == 99 && s.ActiveIdx == 2 && s.Cost == 7
 			},
 			description: "preflop raise",
 		},
@@ -46,7 +46,7 @@ var (
 				{table.Fold, 0},
 			},
 			condition: func(s table.State) bool {
-				return s.Seats[0].Chips == 97 && s.Seats[1].Chips == 107 && s.Seats[2].Chips == 93 && s.Active.Seat == 2 && s.Button == 2
+				return s.Seats[0].Chips == 97 && s.Seats[1].Chips == 107 && s.Seats[2].Chips == 93 && s.ActiveIdx == 2 && s.DealerIdx == 2
 			},
 			description: "full hand 1",
 		},
@@ -57,7 +57,7 @@ func TestTable(t *testing.T) {
 	for _, tc := range testCases {
 		tbl := tc.start
 		for _, a := range tc.actions {
-			if err := tbl.Act(a); err != nil {
+			if _, err := tbl.Act(a); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -68,9 +68,7 @@ func TestTable(t *testing.T) {
 }
 
 func threePerson100Buyin() *table.Table {
-	src := rand.NewSource(42)
-	r := rand.New(src)
-	dealer := hand.NewDealer(r)
+	dealer := hand.NewDealer(rand.New(rand.NewPCG(0, 42)))
 	opts := table.Options{
 		Variant: table.TexasHoldem,
 		Limit:   table.NoLimit,
@@ -78,5 +76,5 @@ func threePerson100Buyin() *table.Table {
 		Buyin:   100,
 	}
 	ids := []string{"a", "b", "c"}
-	return table.New(dealer, opts, ids)
+	return table.New(dealer, opts, ids, nil)
 }

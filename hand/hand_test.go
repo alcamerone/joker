@@ -2,7 +2,7 @@ package hand_test
 
 import (
 	"encoding/json"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/alcamerone/joker/hand"
@@ -230,8 +230,7 @@ func TestBlanks(t *testing.T) {
 }
 
 func TestDeck(t *testing.T) {
-	r := rand.New(rand.NewSource(0))
-	deck := hand.NewDealer(r).Deck()
+	deck := hand.NewDealer(rand.New(rand.NewPCG(0, 0))).Deck()
 	if deck.Pop() == deck.Pop() {
 		t.Fatal("Two Pop() calls should never return the same result")
 	}
@@ -257,7 +256,7 @@ func TestHandJSON(t *testing.T) {
 }
 
 func BenchmarkHandCreation(b *testing.B) {
-	r := rand.New(rand.NewSource(0))
+	r := rand.New(rand.NewPCG(0, 0))
 	cards := hand.NewDealer(r).Deck().PopMulti(7)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
