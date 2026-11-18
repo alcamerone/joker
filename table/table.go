@@ -418,21 +418,28 @@ func (t *Table) payout() {
 	}
 	winnerSet := map[*Player]bool{}
 	for _, pot := range t.pots() {
-		// sort by best hand first
-		sort.Slice(pot.contesting, func(i, j int) bool {
-			iHand := hands[pot.contesting[i]]
-			jHand := hands[pot.contesting[j]]
-			return iHand.CompareTo(jHand) > 0
-		})
-		// select winners who split pot if more than one
 		winners := []*Player{}
-		h1 := hands[pot.contesting[0]]
-		for _, seat := range pot.contesting {
-			h2 := hands[seat]
-			if h1.CompareTo(h2) != 0 {
-				break
+		if len(pot.contesting) == 1 {
+			// An uncontested pot (everyone else folded) needs no showdown. Hands
+			// must not be compared here: before the flop a contestant has only
+			// their two hole cards, which is too few for Hand.CompareTo.
+			winners = append(winners, pot.contesting[0])
+		} else {
+			// sort by best hand first
+			sort.Slice(pot.contesting, func(i, j int) bool {
+				iHand := hands[pot.contesting[i]]
+				jHand := hands[pot.contesting[j]]
+				return iHand.CompareTo(jHand) > 0
+			})
+			// select winners who split pot if more than one
+			h1 := hands[pot.contesting[0]]
+			for _, seat := range pot.contesting {
+				h2 := hands[seat]
+				if h1.CompareTo(h2) != 0 {
+					break
+				}
+				winners = append(winners, seat)
 			}
-			winners = append(winners, seat)
 		}
 		// sort closest to the button for spare chips in split pot
 		sort.Slice(winners, func(i, j int) bool {
